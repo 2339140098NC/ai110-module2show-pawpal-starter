@@ -10,6 +10,10 @@ class Task:
     frequency: str          # e.g. "daily", "weekly", "once"
     completed: bool = False
 
+    def mark_complete(self) -> None:
+        """Mark the task as completed."""
+        self.completed = True
+
 
 @dataclass
 class Owner:
@@ -19,9 +23,11 @@ class Owner:
     pets: List["Pet"] = field(default_factory=list)
 
     def add_pet(self, pet: "Pet") -> None:
+        """Add a pet to the owner's list of pets."""
         self.pets.append(pet)
 
     def get_all_tasks(self) -> List[Task]:
+        """Get all tasks from all pets owned by this owner."""
         tasks = []
         for pet in self.pets:
             tasks.extend(pet.tasks)
@@ -36,9 +42,11 @@ class Pet:
     tasks: List[Task] = field(default_factory=list)
 
     def add_task(self, task: Task) -> None:
+        """Add a task to the pet's list of tasks."""
         self.tasks.append(task)
 
     def get_pending_tasks(self) -> List[Task]:
+        """Get all pending (not completed) tasks for this pet."""
         return [t for t in self.tasks if not t.completed]
 
 
