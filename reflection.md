@@ -53,6 +53,8 @@ Classes to have:
 - Describe one tradeoff your scheduler makes.
 - Why is that tradeoff reasonable for this scenario?
 
+Preferred-time tasks are placed at their exact requested minute even when they overlap another task. The scheduler detects and warns about the conflict but does not move the task to the nearest free slot. This keeps the logic simple and gives the owner full control — for a pet care app, the owner usually has a hard reason for a specific time (e.g., medication must be given at 9 AM), so silently relocating the task would be worse than surfacing a warning and letting them decide.
+
 ---
 
 ## 3. AI Collaboration
