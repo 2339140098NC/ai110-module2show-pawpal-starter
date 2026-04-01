@@ -1,0 +1,34 @@
+The 5 behaviors and their test cases
+1. Recurrence rules (Task.is_due_today)
+Covers the three frequency branches that control whether a task appears at all.
+
+- "once"   → due when completed=False, not due when completed=True
+- "daily"  → due when last_completed_date is None OR a past date;
+             not due when last_completed_date == today
+- "weekly" → due when last_completed_date is None OR >= 7 days ago;
+             not due when last_completed_date was < 7 days ago
+Pass an explicit today=date(2026, 4, 1) so tests are date-independent.
+
+2. Priority ordering (Scheduler.generate_schedule)
+High-priority tasks must be scheduled before medium/low ones when all are flexible (no preferred_time). Verify the order of titles in the returned list.
+
+high "Feeding" 10 min + medium "Grooming" 20 min → Feeding comes first
+3. Preferred time placement (Scheduler.generate_schedule)
+A task with preferred_time=30 must start at offset 30, not at the next free sequential slot.
+
+add one task with preferred_time=30 → schedule[?][1] == 30
+4. Conflict detection (Scheduler.detect_conflicts)
+Two preferred-time tasks whose windows overlap must produce at least one warning string containing the word "WARNING". Tasks on the same pet and on different pets should both be caught.
+
+task A preferred_time=0  duration=20
+task B preferred_time=10 duration=20   → 1 warning returned
+5. Capacity / skip behavior (Scheduler.generate_schedule)
+When total task duration exceeds time_available, the task(s) that don't fit must be absent from the schedule list, and explain_plan() must contain "skipped".
+
+owner time_available=20, one 15-min task + one 10-min task
+→ schedule has 1 entry, explain_plan() contains "skipped"
+Verification
+After writing the tests:
+
+python -m pytest pytest/ -v
+All 5 new tests + 2 existing tests should pass (7 total).
