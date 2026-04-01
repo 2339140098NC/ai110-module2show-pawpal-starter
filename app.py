@@ -19,13 +19,18 @@ with col_b:
     pet_name = st.text_input("Pet name", value="Mochi")
     species = st.selectbox("Species", ["dog", "cat", "other"])
 
-# Initialise session state objects
-if "owner" not in st.session_state:
-    st.session_state.owner = None
-if "pet" not in st.session_state:
-    st.session_state.pet = None
-if "tasks" not in st.session_state:
-    st.session_state.tasks = []
+# Initialise session state
+for key, default in [
+    ("owner", None),
+    ("pet", None),
+    ("tasks", []),
+    ("schedule_rows", None),
+    ("schedule_conflicts", None),
+    ("schedule_reasoning", None),
+    ("schedule_metrics", None),
+]:
+    if key not in st.session_state:
+        st.session_state[key] = default
 
 if st.button("Save owner & pet"):
     owner = Owner(name=owner_name, time_available=int(time_available), preferences=preferences)
@@ -34,12 +39,17 @@ if st.button("Save owner & pet"):
     st.session_state.owner = owner
     st.session_state.pet = pet
     st.session_state.tasks = []
+    # Clear any previously generated schedule
+    st.session_state.schedule_rows = None
+    st.session_state.schedule_conflicts = None
+    st.session_state.schedule_reasoning = None
+    st.session_state.schedule_metrics = None
     st.success(f"Saved! Owner: {owner_name} | Pet: {pet_name} ({species})")
 
 st.divider()
 
 # --- Task management ---
-st.subheader("Tasks")
+st.subheader("Add a Task")
 
 col1, col2, col3, col4, col5 = st.columns(5)
 with col1:
@@ -77,6 +87,11 @@ if st.button("Add task"):
             "frequency": frequency,
             "preferred start": f"min {pref}" if pref is not None else "flexible",
         })
+        # Invalidate any cached schedule so stale results aren't shown
+        st.session_state.schedule_rows = None
+        st.session_state.schedule_conflicts = None
+        st.session_state.schedule_reasoning = None
+        st.session_state.schedule_metrics = None
         st.success(f"Added: {task_title}")
 
 st.divider()
@@ -84,39 +99,37 @@ st.divider()
 # --- Task list with filtering ---
 st.subheader("All Tasks")
 
+PRIORITY_ICON = {"high": "🔴", "medium": "🟡", "low": "🟢"}
+
 if st.session_state.tasks:
-    filter_status = st.radio(
-        "Filter by status",
-        options=["all", "pending", "completed"],
-        horizontal=True,
-    )
+    filter_col, _ = st.columns([2, 3])
+    with filter_col:
+        filter_status = st.radio(
+            "Filter by status",
+            options=["all", "pending", "completed"],
+            horizontal=True,
+        )
 
     displayed = []
     if st.session_state.owner is not None:
-        scheduler_preview = Scheduler(st.session_state.owner)
-        completed_filter = None
-        if filter_status == "pending":
-            completed_filter = False
-        elif filter_status == "completed":
-            completed_filter = True
-
-        for pet, task in scheduler_preview.filter_tasks(completed=completed_filter):
-            due_label = "due today" if task.is_due_today() else "not due today"
+        completed_filter = {"pending": False, "completed": True}.get(filter_status)
+        for pet, task in Scheduler(st.session_state.owner).filter_tasks(completed=completed_filter):
+            due_label = "✅ due today" if task.is_due_today() else "⏭ not due today"
             displayed.append({
-                "pet": pet.name,
-                "title": task.title,
-                "duration (min)": task.duration_minutes,
-                "priority": task.priority,
-                "frequency": task.frequency,
-                "recurrence": due_label,
-                "status": "completed" if task.completed else "pending",
-                "preferred start": f"min {task.preferred_time}" if task.preferred_time is not None else "flexible",
+                "Pet": pet.name,
+                "Task": task.title,
+                "Priority": f"{PRIORITY_ICON.get(task.priority, '')} {task.priority}",
+                "Duration (min)": task.duration_minutes,
+                "Frequency": task.frequency,
+                "Recurrence": due_label,
+                "Status": "✔ completed" if task.completed else "⏳ pending",
+                "Preferred start": f"min {task.preferred_time}" if task.preferred_time is not None else "flexible",
             })
 
     if displayed:
-        st.table(displayed)
+        st.dataframe(displayed, use_container_width=True, hide_index=True)
     else:
-        st.info(f"No tasks match filter: {filter_status}.")
+        st.info(f"No tasks match filter: **{filter_status}**.")
 else:
     st.info("No tasks yet. Add one above.")
 
@@ -133,53 +146,65 @@ if st.button("Generate schedule"):
     else:
         scheduler = Scheduler(st.session_state.owner)
         scheduler.generate_schedule()
-
-        # Sort by start time for display
         sorted_schedule = scheduler.sort_by_time()
 
-        st.success("Schedule generated!")
-
-        start_hour = 8 * 60  # 8:00 AM in minutes
+        # Build display rows
         rows = []
+        base = 8 * 60  # 8:00 AM offset
         for task, offset in sorted_schedule:
-            actual = start_hour + offset
-            hour, minute = divmod(actual, 60)
-            am_pm = "AM" if hour < 12 else "PM"
-            display_hour = hour if hour <= 12 else hour - 12
+            total = base + offset
+            h, m = divmod(total, 60)
+            ap = "AM" if h < 12 else "PM"
+            dh = h if h <= 12 else h - 12
             rows.append({
-                "Time": f"{display_hour}:{minute:02d} {am_pm}",
+                "Time": f"{dh}:{m:02d} {ap}",
                 "Task": task.title,
+                "Priority": f"{PRIORITY_ICON.get(task.priority, '')} {task.priority}",
                 "Duration (min)": task.duration_minutes,
-                "Priority": task.priority,
                 "Frequency": task.frequency,
             })
 
-        st.table(rows)
-
-        # Conflict report
+        time_used = sum(task.duration_minutes for task, _ in sorted_schedule)
         conflicts = scheduler.detect_conflicts()
-        if conflicts:
-            st.error(f"**{len(conflicts)} conflict(s) detected:**")
-            for t1, t2, s1, s2 in conflicts:
-                base = 8 * 60
 
-                def fmt(offset, dur):
-                    s = base + offset
-                    h, m = divmod(s, 60)
-                    ap = "AM" if h < 12 else "PM"
-                    dh = h if h <= 12 else h - 12
-                    e = base + offset + dur
-                    eh, em = divmod(e, 60)
-                    eap = "AM" if eh < 12 else "PM"
-                    edh = eh if eh <= 12 else eh - 12
-                    return f"{dh}:{m:02d} {ap} – {edh}:{em:02d} {eap}"
+        # Persist results so Streamlit reruns don't re-run the scheduler
+        st.session_state.schedule_rows = rows
+        st.session_state.schedule_conflicts = conflicts
+        st.session_state.schedule_reasoning = scheduler.explain_plan()
+        st.session_state.schedule_metrics = {
+            "scheduled": len(rows),
+            "time_used": time_used,
+            "time_available": st.session_state.owner.time_available,
+            "conflicts": len(conflicts),
+        }
 
-                st.warning(
-                    f"'{t1.title}' ({fmt(s1, t1.duration_minutes)}) overlaps "
-                    f"'{t2.title}' ({fmt(s2, t2.duration_minutes)})"
-                )
-        else:
-            st.success("No scheduling conflicts.")
+# Display stored schedule results (survives reruns)
+if st.session_state.schedule_rows is not None:
+    rows = st.session_state.schedule_rows
+    metrics = st.session_state.schedule_metrics
+    conflicts = st.session_state.schedule_conflicts
 
-        st.markdown("#### Reasoning")
-        st.text(scheduler.explain_plan())
+    # Summary metrics bar
+    m1, m2, m3, m4 = st.columns(4)
+    m1.metric("Tasks scheduled", metrics["scheduled"])
+    m2.metric("Time used (min)", metrics["time_used"])
+    m3.metric("Time available (min)", metrics["time_available"])
+    m4.metric("Conflicts", metrics["conflicts"])
+
+    if rows:
+        st.success("Schedule generated — sorted by start time.")
+        st.dataframe(rows, use_container_width=True, hide_index=True)
+    else:
+        st.warning("No tasks were due today or none fit within the available time.")
+
+    # Conflict warnings
+    if conflicts:
+        st.error(f"**{len(conflicts)} scheduling conflict(s) detected — review before finalising:**")
+        for warning in conflicts:
+            st.warning(warning)
+    else:
+        st.success("No scheduling conflicts detected.")
+
+    # Reasoning expander
+    with st.expander("Show scheduling reasoning"):
+        st.text(st.session_state.schedule_reasoning)
